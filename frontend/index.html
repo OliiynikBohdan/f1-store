@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>F1 Store</title>
+
+    <style>
+      body {
+        font-family: consolas;
+        margin: 20px;
+        background-color: #3b435c;
+        color: #fff;
+      }
+      .container {
+        max-width: 1024px;
+        margin: 0 auto;
+        text-align: center;
+      }
+      .form-group {
+        width: 100%;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        flex-direction: column;
+        margin-bottom: 15px;
+        gap: 6px;
+      }
+
+      input {
+        width: 100%;
+        padding: 8px;
+        margin-bottom: 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      button {
+        font-size: 14px;
+        padding: 10px 20px;
+        background-color: #007bff;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        margin-bottom: 40px;
+      }
+      button:hover {
+        background-color: #0473eb;
+        transition: 0.3s ease;
+      }
+      button:disabled {
+        background-color: #cccccc;
+        cursor: not-allowed;
+        color: #999999;
+      }
+      .status {
+        margin-top: 20px;
+        text-align: left;
+      }
+      .status div {
+        display: flex;
+        align-items: center;
+        margin-bottom: 10px;
+      }
+      .status div span {
+        margin-left: 10px;
+      }
+      .loading {
+        width: 16px;
+        height: 16px;
+        margin-top: 7px;
+        border: 2px solid #ccc;
+        border-top: 2px solid #007bff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        from {
+          transform: rotate(0deg);
+        }
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .success {
+        color: rgb(4, 179, 4);
+      }
+      .error {
+        color: red;
+      }
+      .error-log {
+        width: 20%;
+        background-color: #ead1d1;
+        margin-top: 20px;
+        color: red;
+        border: 1px solid red;
+        padding: 10px;
+        border-radius: 4px;
+        background-color: #ffe5e5;
+      }
+      .validation-error {
+        color: rgb(255, 136, 0);
+        font-size: 12px;
+        text-align: left;
+        text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>F1 STORE</h1>
+
+      <div class="form-group">
+        <label for="rds-url">RDS</label>
+        <input
+          type="url"
+          class="form-control"
+          id="rds-url"
+          placeholder="https://example.com/rds"
+          required
+        />
+        <div id="rds-error" class="validation-error"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="redis-url">Redis</label>
+        <input
+          type="url"
+          class="form-control"
+          id="redis-url"
+          placeholder="https://example.com/redis"
+          required
+        />
+        <div id="redis-error" class="validation-error"></div>
+      </div>
+
+      <button id="submitBtn" disabled>Submit</button>
+      <div id="form-error" class="validation-error" style="display: none">
+        Заповніть усі поля
+      </div>
+
+      <div class="status">
+        <div id="rdsStatus">
+          <div class="loading" id="rdsLoading"></div>
+          <span>RDS: <span id="rdsResult">Idle</span></span>
+        </div>
+        <div id="redisStatus">
+          <div class="loading" id="redisLoading"></div>
+          <span>Redis: <span id="redisResult">Idle</span></span>
+        </div>
+      </div>
+
+      <div id="errorLog" class="error-message" style="display: none"></div>
+    </div>
+
+    <script>
+      function isValidURL(string) {
+        try {
+          new URL(string);
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      function validateForm() {
+        const rdsUrl = document.getElementById('rds-url').value.trim();
+        const redisUrl = document.getElementById('redis-url').value.trim();
+        const submitBtn = document.getElementById('submitBtn');
+        const formError = document.getElementById('form-error');
+
+        if (rdsUrl === '' || redisUrl === '') {
+          submitBtn.disabled = true;
+          formError.style.display = 'block';
+        } else {
+          submitBtn.disabled = false;
+          formError.style.display = 'none';
+        }
+      }
+
+      function showLoader() {
+        document.getElementById('redisLoading').style.display = 'block';
+        document.getElementById('rdsLoading').style.display = 'block';
+      }
+
+      function hideLoader() {
+        document.getElementById('redisLoading').style.display = 'none';
+        document.getElementById('rdsLoading').style.display = 'none';
+      }
+
+      function displayResults(results) {
+        const redisResult = document.getElementById('redisResult');
+        const rdsResult = document.getElementById('rdsResult');
+        const errorLog = document.getElementById('errorLog');
+
+        let errorMessages = [];
+
+        results.forEach(result => {
+          if (result.label === 'Redis Connection') {
+            redisResult.textContent = result.message;
+            redisResult.className = result.isError ? 'error' : 'success';
+            if (result.isError) errorMessages.push(result.message);
+          } else if (result.label === 'RDS Connection') {
+            rdsResult.textContent = result.message;
+            rdsResult.className = result.isError ? 'error' : 'success';
+            if (result.isError) errorMessages.push(result.message);
+          }
+        });
+
+        if (errorMessages.length > 0) {
+          errorLog.innerHTML = errorMessages.join('<br>');
+        } else {
+          errorLog.style.display = 'none';
+        }
+      }
+
+      async function testConnections() {
+        const rdsUrlInput = document.getElementById('rds-url');
+        const redisUrlInput = document.getElementById('redis-url');
+        const rdsUrl = rdsUrlInput.value.trim();
+        const redisUrl = redisUrlInput.value.trim();
+
+        let hasError = false;
+        const results = [];
+
+        if (!isValidURL(rdsUrl)) {
+          document.getElementById('rds-error').textContent = 'Invalid RDS URL';
+          hasError = true;
+        } else {
+          document.getElementById('rds-error').textContent = '';
+        }
+
+        if (!isValidURL(redisUrl)) {
+          document.getElementById('redis-error').textContent =
+            'Invalid Redis URL';
+          hasError = true;
+        } else {
+          document.getElementById('redis-error').textContent = '';
+        }
+
+        if (hasError) {
+          return;
+        }
+
+        showLoader();
+        document.getElementById('errorLog').style.display = 'none';
+
+        const fetchRDS = fetch(rdsUrl)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`RDS: ${response.status} ${response.statusText}`);
+            }
+            return response.json();
+          })
+          .then(data => {
+            results.push({
+              label: 'RDS Connection',
+              message: JSON.stringify(data, null, 2),
+              isError: false,
+            });
+          })
+          .catch(error => {
+            results.push({
+              label: 'RDS Connection',
+              message: error.message,
+              isError: true,
+            });
+          });
+
+        const fetchRedis = fetch(redisUrl)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(
+                `Redis: ${response.status} ${response.statusText}`,
+              );
+            }
+            return response.json();
+          })
+          .then(data => {
+            results.push({
+              label: 'Redis Connection',
+              message: JSON.stringify(data, null, 2),
+              isError: false,
+            });
+          })
+          .catch(error => {
+            results.push({
+              label: 'Redis Connection',
+              message: error.message,
+              isError: true,
+            });
+          });
+
+        await Promise.all([fetchRDS, fetchRedis]);
+
+        hideLoader();
+        displayResults(results);
+      }
+
+      document
+        .getElementById('submitBtn')
+        .addEventListener('click', testConnections);
+
+      document.getElementById('rds-url').addEventListener('input', function () {
+        validateForm();
+      });
+
+      document
+        .getElementById('redis-url')
+        .addEventListener('input', function () {
+          validateForm();
+        });
+
+      validateForm();
+    </script>
+  </body>
+</html>
