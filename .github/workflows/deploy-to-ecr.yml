@@ -10,9 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # (1) Крок: Витягнути код із репозиторію
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # (2) Крок: Налаштувати AWS-креденшали
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -20,10 +22,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
 
+      # (3) Крок: Логін у ECR (щоб можна було пушити Docker-образи в реєстр)
       - name: Log in to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # (4) Крок: Build & Push для backend-rds
       - name: Build and push backend-rds image
         env:
           GIT_SHA: ${{ github.sha }}
@@ -34,6 +38,7 @@ jobs:
           docker tag backend-rds $ECR_REGISTRY/backend-rds:$GIT_SHA
           docker push $ECR_REGISTRY/backend-rds:$GIT_SHA
 
+      # (5) Крок: Build & Push для backend-redis
       - name: Build and push backend-redis image
         env:
           GIT_SHA: ${{ github.sha }}
@@ -44,8 +49,10 @@ jobs:
           docker tag backend-redis $ECR_REGISTRY/backend-redis:$GIT_SHA
           docker push $ECR_REGISTRY/backend-redis:$GIT_SHA
 
+      # (6) Крок: SSH на EC2 + оновлення docker-compose.yml + перезапуск контейнерів
       - name: Deploy to EC2
         env:
+          # Ці змінні доступні лише в рамках цієї job:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           GIT_SHA: ${{ github.sha }}
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
@@ -54,36 +61,33 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           EC2_HOST: ${{ vars.EC2_HOST }}
         run: |
-          # 1. Підготуємо приватний ключ
+          # 1. Створюємо файл ключа
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-          # 2. Підключаємося по SSH до EC2 з передачою змінних середовища
-          ssh -o StrictHostKeyChecking=no -i private_key.pem \
-            AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
-            AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
-            AWS_REGION=$AWS_REGION \
-            ECR_REGISTRY=$ECR_REGISTRY \
-            ubuntu@$EC2_HOST << 'EOF'
-            
-            # Якщо треба, додаємо користувача ubuntu до групи docker (разово)
-            # sudo usermod -aG docker ubuntu
+          # 2. Заходимо через SSH на EC2 (неінтерактивна сесія)
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_HOST << EOF
+            # a) Експортуємо змінні (щоб aws CLI бачив креденшали)
+            export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+            export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+            export AWS_REGION=${AWS_REGION}
+            export ECR_REGISTRY=${ECR_REGISTRY}
+            export GIT_SHA=${GIT_SHA}
 
-            # Перейдемо в каталог, де лежить docker-compose.yml
+            # b) Переходимо в папку з docker-compose.yml
             cd f1-store
 
-            # Логін в ECR (тепер бачить креденшали)
+            # c) Логін в ECR (тепер бачить креденшали)
             aws ecr get-login-password --region "$AWS_REGION" \
               | sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-            # Оновлюємо docker-compose.yml для backend_rds
+            # d) Оновлюємо docker-compose.yml для backend_rds
             yq e '.services.backend_rds.image = strenv(ECR_REGISTRY)+"/backend-rds:"+strenv(GIT_SHA)' -i docker-compose.yml
 
-            # Оновлюємо docker-compose.yml для backend_redis
+            # e) Оновлюємо docker-compose.yml для backend_redis
             yq e '.services.backend_redis.image = strenv(ECR_REGISTRY)+"/backend-redis:"+strenv(GIT_SHA)' -i docker-compose.yml
 
-            # Перезапускаємо контейнери
+            # f) Перезапускаємо контейнери
             sudo docker-compose down
             sudo docker-compose up -d
-
           EOF
