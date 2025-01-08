@@ -46,6 +46,7 @@ jobs:
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           GIT_SHA: ${{ github.sha }}
+          EC2_HOST: ${{ vars.EC2_HOST }}
         run: |
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
