@@ -1,3 +1,5 @@
+name: Build and deploy
+
 on:
   push:
     branches:
@@ -22,49 +24,78 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # =========================
+      # Build & push backend-rds
+      # =========================
       - name: Build and push backend-rds image
         env:
           GIT_SHA: ${{ github.sha }}
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
         run: |
-          cd backend_rds/
-          docker build -t backend-rds .
-          docker tag backend-rds $ECR_REGISTRY/backend-rds:$GIT_SHA
-          docker push $ECR_REGISTRY/backend-rds:$GIT_SHA
+          cd backend_rds
+          sudo docker build -t backend-rds .
+          sudo docker tag backend-rds $ECR_REGISTRY/backend-rds:$GIT_SHA
+          sudo docker push $ECR_REGISTRY/backend-rds:$GIT_SHA
 
+      # ==========================
+      # Build & push backend-redis
+      # ==========================
       - name: Build and push backend-redis image
         env:
           GIT_SHA: ${{ github.sha }}
           ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
         run: |
-          cd backend_redis/
-          docker build -t backend-redis .
-          docker tag backend-redis $ECR_REGISTRY/backend-redis:$GIT_SHA
-          docker push $ECR_REGISTRY/backend-redis:$GIT_SHA
+          cd backend_redis
+          sudo docker build -t backend-redis .
+          sudo docker tag backend-redis $ECR_REGISTRY/backend-redis:$GIT_SHA
+          sudo docker push $ECR_REGISTRY/backend-redis:$GIT_SHA
 
+      # =========================
+      # Deploy to EC2
+      # =========================
       - name: Deploy to EC2
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           GIT_SHA: ${{ github.sha }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          # Якщо треба, додайте:
+          # AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          # AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           EC2_HOST: ${{ vars.EC2_HOST }}
         run: |
+          # 1. Підготуємо приватний ключ
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
-          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_HOST << EOF
-            cd f1-store/
 
-            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+          # 2. Підключаємося по SSH до EC2
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_HOST << EOF
+
+            # Якщо потрібно, додайте користувача в групу docker (і перезайдіть під час наступного підключення)
+            # sudo usermod -aG docker ubuntu
+
+            # Встановимо yq, якщо воно не встановлене (разово)
+            # sudo apt-get update -y && sudo apt-get install -y yq
+
+            # Перейдемо в папку з docker-compose.yml
+            cd f1-store
+
+            # (Якщо треба, експортуємо доступ до ECR)
+            export AWS_REGION=$AWS_REGION
+            # export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            # export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
 
             # Логін в ECR
-            aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+            aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin $ECR_REGISTRY
 
-            # Оновлення docker-compose.yml
-            cd f1-store
-            yq e '.services.backend_rds.image = "$$ECR_REGISTRY/backend-redis:$GIT_SHA"' -i docker-compose.yml
-            yq e '.services.backend_redi.image = "$$ECR_REGISTRY/backend-redis:$GIT_SHA"' -i docker-compose.yml
+            # Оновлюємо docker-compose.yml для backend_rds
+            yq e '.services.backend_rds.image = strenv(ECR_REGISTRY)+"/backend-rds:"+strenv(GIT_SHA)' -i docker-compose.yml
 
-            # Перезапуск контейнерів
+            # Оновлюємо docker-compose.yml для backend_redis
+            yq e '.services.backend_redis.image = strenv(ECR_REGISTRY)+"/backend-redis:"+strenv(GIT_SHA)' -i docker-compose.yml
+
+            # Перезапускаємо контейнери
             sudo docker-compose down
             sudo docker-compose up -d
+
           EOF
