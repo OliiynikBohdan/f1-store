@@ -1,0 +1,78 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push backend-rds image
+        env:
+          GIT_SHA: ${{ github.sha }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+        run: |
+          cd backend_rds
+          docker build -t backend-rds .
+          docker tag backend-rds $ECR_REGISTRY/backend-rds:$GIT_SHA
+          docker push $ECR_REGISTRY/backend-rds:$GIT_SHA
+
+      - name: Build and push backend-redis image
+        env:
+          GIT_SHA: ${{ github.sha }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+        run: |
+          cd backend_redis
+          docker build -t backend-redis .
+          docker tag backend-redis $ECR_REGISTRY/backend-redis:$GIT_SHA
+          docker push $ECR_REGISTRY/backend-redis:$GIT_SHA
+
+      - name: Deploy to EC2
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          GIT_SHA: ${{ github.sha }}
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          EC2_HOST: ${{ vars.EC2_HOST }}
+        run: |
+          echo "$SSH_PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+
+          ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_HOST << EOF
+            export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+            export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+            export AWS_REGION=${AWS_REGION}
+            export ECR_REGISTRY=${ECR_REGISTRY}
+            export GIT_SHA=${GIT_SHA}
+
+            cd f1-store
+
+            aws ecr get-login-password --region "$AWS_REGION" \
+              | sudo docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+            yq e '.services.backend_rds.image = strenv(ECR_REGISTRY)+"/backend-rds:"+strenv(GIT_SHA)' -i docker-compose.yml
+
+            yq e '.services.backend_redis.image = strenv(ECR_REGISTRY)+"/backend-redis:"+strenv(GIT_SHA)' -i docker-compose.yml
+
+            sudo docker-compose down
+            sudo docker-compose up -d
+          EOF
