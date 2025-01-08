@@ -71,10 +71,8 @@ jobs:
           # 2. Підключаємося по SSH до EC2
           ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_HOST << EOF
 
-            # Якщо потрібно, додайте користувача в групу docker (і перезайдіть під час наступного підключення)
             # sudo usermod -aG docker ubuntu
 
-            # Встановимо yq, якщо воно не встановлене (разово)
             # sudo apt-get update -y && sudo apt-get install -y yq
 
             # Перейдемо в папку з docker-compose.yml
