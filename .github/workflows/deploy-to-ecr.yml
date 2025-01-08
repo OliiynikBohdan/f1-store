@@ -26,14 +26,18 @@ jobs:
         env:
           GIT_SHA: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/backend-rds:$GIT_SHA -f backend_rds/Dockerfile backend_rds
+          cd backend_rds/
+          docker build -t backend-rds .
+          docker tag $ECR_REGISTRY/backend-rds:$GIT_SHA
           docker push $ECR_REGISTRY/backend-rds:$GIT_SHA
 
       - name: Build and push backend-redis image
         env:
           GIT_SHA: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/backend-redis:$GIT_SHA -f backend_redis/Dockerfile backend_redis
+          cd backend_redis/
+          docker build -t backend-redis .
+          docker tag $ECR_REGISTRY/backend-redis:$GIT_SHA
           docker push $ECR_REGISTRY/backend-redis:$GIT_SHA
 
       - name: Deploy to EC2
