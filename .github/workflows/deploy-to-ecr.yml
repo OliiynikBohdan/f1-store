@@ -52,11 +52,19 @@ jobs:
           chmod 600 private_key.pem
           ssh -o StrictHostKeyChecking=no -i private_key.pem ubuntu@$EC2_HOST << EOF
             cd f1-store
+            
+            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+
+            # Логін в ECR
             aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
-            yq e '.services.backend-rds.image = "$ECR_REGISTRY/backend-rds:$GIT_SHA"' -i docker-compose.yml
-            yq e '.services.backend-redis.image = "$ECR_REGISTRY/backend-redis:$GIT_SHA"' -i docker-compose.yml
+            # Оновлення docker-compose.yml
+            cd f1-store
+            yq e '.services.backend-rds.image = "'"$ECR_REGISTRY/backend-rds:$GIT_SHA"'"' -i docker-compose.yml
+            yq e '.services.backend-redis.image = "'"$ECR_REGISTRY/backend-redis:$GIT_SHA"'"' -i docker-compose.yml
 
+            # Перезапуск контейнерів
             docker-compose down
             docker-compose up -d
           EOF
